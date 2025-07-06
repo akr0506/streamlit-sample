@@ -6,26 +6,30 @@ from datetime import datetime, timedelta
 
 st.title('株価可視化アプリ')
 
-# 銘柄リスト
-tickers = {
-    'Apple': 'AAPL',
-    'Facebook': 'META',
-    'Google': 'GOOGL',
-    'Microsoft': 'MSFT',
-    'Netflix': 'NFLX',
-    'Amazon': 'AMZN'
-}
+# S&P 500の銘柄リストを取得
+@st.cache_data
+def get_sp500_tickers():
+    try:
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        payload = pd.read_html(url)
+        # Wikipediaのテーブルからティッカーシンボルを取得
+        tickers = payload[0]['Symbol'].tolist()
+        return tickers
+    except Exception as e:
+        st.error(f"S&P 500の銘柄リストの取得に失敗しました: {e}")
+        # フォールバック用の基本的な銘柄リスト
+        return ['AAPL', 'META', 'GOOGL', 'MSFT', 'NFLX', 'AMZN']
 
 # サイドバー
 st.sidebar.header('条件設定')
 
 # 銘柄選択
-selected_tickers_jp = st.sidebar.multiselect(
-    '銘柄を選択してください',
-    list(tickers.keys()),
-    ['Apple', 'Google']
+all_tickers = get_sp500_tickers()
+selected_tickers = st.sidebar.multiselect(
+    '銘柄を検索・選択してください',
+    all_tickers,
+    ['AAPL', 'GOOGL']  # デフォルトで選択されている銘柄
 )
-selected_tickers_en = [tickers[ticker] for ticker in selected_tickers_jp]
 
 # 期間選択
 end_date = datetime.today()
@@ -49,27 +53,37 @@ def get_stock_data(tickers, start, end):
             st.error('データの取得に失敗しました。銘柄または期間を変更してください。')
             return pd.DataFrame()
         
-        # 利用可能なカラムを確認
-        available_columns = data.columns.get_level_values(0).unique() if isinstance(data.columns, pd.MultiIndex) else data.columns
-        
-        # 'Adj Close'が利用可能な場合はそれを使用、そうでなければ'Close'を使用
-        if 'Adj Close' in available_columns:
-            return data['Adj Close']
-        elif 'Close' in available_columns:
-            st.info('調整後終値が利用できないため、終値を使用します。')
-            return data['Close']
-        else:
+        # Adj Closeを試す
+        try:
+            if isinstance(tickers, list) and len(tickers) > 1:
+                stock_data = data['Adj Close']
+            else:
+                stock_data = data[['Adj Close']].rename(columns={'Adj Close': tickers[0]})
+        except KeyError:
+            st.warning(" 'Adj Close' が見つかりませんでした。'Close' を使用します。")
+            if isinstance(tickers, list) and len(tickers) > 1:
+                stock_data = data['Close']
+            else:
+                stock_data = data[['Close']].rename(columns={'Close': tickers[0]})
+
+        if stock_data.empty:
             st.error('株価データが見つかりません。')
             return pd.DataFrame()
+            
+        return stock_data
             
     except Exception as e:
         st.error(f'データ取得中にエラーが発生しました: {str(e)}')
         return pd.DataFrame()
 
-if selected_tickers_en:
-    stock_data = get_stock_data(selected_tickers_en, start_date, end_date)
+if selected_tickers:
+    stock_data = get_stock_data(selected_tickers, start_date, end_date)
 
     if not stock_data.empty:
+        # 単一銘柄の場合、カラム名をティッカーシンボルに設定
+        if len(selected_tickers) == 1:
+            stock_data.columns = selected_tickers
+
         st.header('株価 (USD)')
         st.dataframe(stock_data)
 
